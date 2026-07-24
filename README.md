@@ -1,58 +1,66 @@
+# FindIt WashU
 
-# Welcome to your CDK Python project!
+FindIt WashU is a simple lost-and-found web app for campus items. Users can log in, post items they lost or found, and browse current listings.
 
-This is a blank project for CDK development with Python.
+Live app:
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+https://d2tsgvc3pen7pg.cloudfront.net
 
-This project is set up like a standard Python project.  The initialization
-process also creates a virtualenv within this project, stored under the `.venv`
-directory.  To create the virtualenv it assumes that there is a `python3`
-(or `python` for Windows) executable in your path with access to the `venv`
-package. If for any reason the automatic creation of the virtualenv fails,
-you can create the virtualenv manually.
+## What it does
 
-To manually create a virtualenv on MacOS and Linux:
+A user can submit a listing with:
 
-```
-$ python3 -m venv .venv
-```
+- lost or found status
+- category
+- description
+- location
+- contact info
 
-After the init process completes and the virtualenv is created, you can use the following
-step to activate your virtualenv.
+When a new listing is submitted, the app saves it and starts a background match check. For this demo, matching is based on opposite item type and the same category.
 
-```
-$ source .venv/bin/activate
-```
+For example, a lost electronics item can match a found electronics item.
 
-If you are a Windows platform, you would activate the virtualenv like this:
+## Architecture
 
-```
-% .venv\Scripts\activate.bat
-```
+The app uses:
 
-Once the virtualenv is activated, you can install the required dependencies.
+- CloudFront for the HTTPS frontend URL
+- S3 for the static frontend files
+- Auth0 for login
+- API Gateway for the backend API
+- Lambda for the API logic
+- DynamoDB for the lost-and-found listings
+- SQS for background match jobs
+- Worker Lambda for matching
+- Firebase Firestore for a small activity log
+- CDK for infrastructure as code
 
-```
-$ pip install -r requirements.txt
-```
+## Basic flow
 
-At this point you can now synthesize the CloudFormation template for this code.
+1. User opens the CloudFront URL.
+2. User logs in with Auth0.
+3. User submits a lost or found item.
+4. API Lambda saves the item in DynamoDB.
+5. API Lambda sends a message to SQS.
+6. Worker Lambda checks for possible matches.
+7. Firebase records a small activity log entry.
 
-```
-$ cdk synth
-```
+## Setup
 
-To add additional dependencies, for example other CDK libraries, just add
-them to your `requirements.txt` file and rerun the `python -m pip install -r requirements.txt`
-command.
+Install dependencies:
 
-## Useful commands
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
 
- * `cdk ls`          list all stacks in the app
- * `cdk synth`       emits the synthesized CloudFormation template
- * `cdk deploy`      deploy this stack to your default AWS account/region
- * `cdk diff`        compare deployed stack with current state
- * `cdk docs`        open CDK documentation
+Deploy with CDK:
 
-Enjoy!
+    cdk deploy
+
+After deployment, use the CloudFront output as the live app URL.
+
+## Notes
+
+DynamoDB is the main database. Firebase is only used as the required third-party SaaS integration for the demo.
+
+The matching logic is intentionally simple for the MVP. A future version could add dropdown categories, better location handling, and fuzzy matching.
