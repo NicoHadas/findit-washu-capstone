@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>FindIt WashU</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px;
+      line-height: 1.5;
+    }
+    h1 { margin-bottom: 5px; }
+    .card {
+      border: 1px solid #ccc;
+      padding: 16px;
+      margin: 16px 0;
+      border-radius: 8px;
+    }
+    label {
+      display: block;
+      margin-top: 10px;
+      font-weight: bold;
+    }
+    input, select, textarea {
+      width: 100%;
+      padding: 8px;
+      margin-top: 4px;
+      box-sizing: border-box;
+    }
+    button {
+      margin-top: 12px;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+    .item {
+      border-bottom: 1px solid #ddd;
+      padding: 10px 0;
+    }
+    .small {
+      color: #555;
+      font-size: 0.9em;
+    }
+    #app {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>FindIt WashU</h1>
+  <p>Campus Lost and Found Matcher</p>
+
+  <div class="card">
+    <h2>Login</h2>
+    <p id="login-status">Checking login status...</p>
+    <button id="login-button">Log in with Auth0</button>
+    <button id="logout-button" style="display:none;">Log out</button>
+  </div>
+
+  <div id="app">
+    <div class="card">
+      <h2>Post a lost or found item</h2>
+
+      <form id="item-form">
+        <label>Item type</label>
+        <select id="itemType" required>
+          <option value="lost">Lost</option>
+          <option value="found">Found</option>
+        </select>
+
+        <label>Category</label>
+        <input id="category" placeholder="electronics, clothing, keys, bottle" required>
+
+        <label>Description</label>
+        <textarea id="description" placeholder="black AirPods case, blue water bottle, etc." required></textarea>
+
+        <label>Location</label>
+        <input id="location" placeholder="library, classroom, cafeteria" required>
+
+        <label>Contact</label>
+        <input id="contact" placeholder="your email or phone" required>
+
+        <button type="submit">Submit item</button>
+      </form>
+
+      <p id="form-message"></p>
+    </div>
+
+    <div class="card">
+      <h2>Open listings</h2>
+      <button id="refresh-button">Refresh listings</button>
+      <div id="items"></div>
+    </div>
+
+    <div class="card">
+      <h2>Firebase activity log</h2>
+      <p class="small">This proves the required third-party SaaS integration.</p>
+      <div id="activity"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.auth0.com/js/auth0-spa-js/2.1/auth0-spa-js.production.js"></script>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import {
+      getFirestore,
+      collection,
+      addDoc,
+      getDocs,
+      query,
+      orderBy,
+      limit,
+      serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+    const API_URL = "https://dh917k47z6.execute-api.us-east-1.amazonaws.com";
+
+    const AUTH0_DOMAIN = "dev-eup7xtvmykcawtzt.us.auth0.com";
+    const AUTH0_CLIENT_ID = "uIFRp7ExAilwR719By7a6apJlkwIOCZL";
+    const AUTH0_AUDIENCE = "https://findit-washu-api";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBeBRkk6rCxLLQxn-Oxr5CpvZ30r2bsA64",
+      authDomain: "washu-cloud-week6-2d00a.firebaseapp.com",
+      projectId: "washu-cloud-week6-2d00a"
+    };
+
+    const firebaseApp = initializeApp(firebaseConfig);
+    const db = getFirestore(firebaseApp);
+
+    let auth0Client = null;
+    let currentUser = null;
+
+    const loginStatus = document.getElementById("login-status");
+    const loginButton = document.getElementById("login-button");
+    const logoutButton = document.getElementById("logout-button");
+    const appDiv = document.getElementById("app");
+    const form = document.getElementById("item-form");
+    const formMessage = document.getElementById("form-message");
+    const itemsDiv = document.getElementById("items");
+    const activityDiv = document.getElementById("activity");
+
+    async function initAuth0() {
+      let authErrorMessage = null;
+      const params = new URLSearchParams(window.location.search);
+
+      if (params.has("error")) {
+        authErrorMessage = params.get("error_description") || params.get("error");
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      auth0Client = await auth0.createAuth0Client({
+        domain: AUTH0_DOMAIN,
+        clientId: AUTH0_CLIENT_ID,
+        authorizationParams: {
+          audience: AUTH0_AUDIENCE,
+          redirect_uri: window.location.origin,
+          scope: "openid profile email"
+        }
+      });
+
+      if (window.location.search.includes("code=") && window.location.search.includes("state=")) {
+        await auth0Client.handleRedirectCallback();
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      const isAuthenticated = await auth0Client.isAuthenticated();
+
+      if (isAuthenticated) {
+        currentUser = await auth0Client.getUser();
+        loginStatus.textContent = `Logged in as ${currentUser.email || currentUser.name}`;
+        loginButton.style.display = "none";
+        logoutButton.style.display = "inline-block";
+        appDiv.style.display = "block";
+        document.getElementById("contact").value = currentUser.email || "";
+        await loadItems();
+        await loadActivity();
+      } else {
+        loginStatus.textContent = authErrorMessage ? `Auth0 returned error: ${authErrorMessage}` : "You must log in before using the app.";
+        loginButton.style.display = "inline-block";
+        logoutButton.style.display = "none";
+        appDiv.style.display = "none";
+      }
+    }
+
+    async function getAccessToken() {
+      return await auth0Client.getTokenSilently({
+        authorizationParams: {
+          audience: AUTH0_AUDIENCE
+        }
+      });
+    }
+
+    async function loadItems() {
+      const token = await getAccessToken();
+
+      const response = await fetch(`${API_URL}/items`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        itemsDiv.innerHTML = `<p>Error loading items: ${data.error || response.statusText}</p>`;
+        return;
+      }
+
+      if (!data.items || data.items.length === 0) {
+        itemsDiv.innerHTML = "<p>No items posted yet.</p>";
+        return;
+      }
+
+      itemsDiv.innerHTML = data.items.map(item => `
+        <div class="item">
+          <strong>${item.itemType.toUpperCase()}:</strong> ${item.description}<br>
+          <span class="small">
+            Category: ${item.category} |
+            Location: ${item.location} |
+            Contact: ${item.contact}
+          </span><br>
+          <span class="small">
+            Matches: ${item.matches && item.matches.length ? item.matches.join(", ") : "none yet"}
+          </span>
+        </div>
+      `).join("");
+    }
+
+    async function loadActivity() {
+      try {
+        const q = query(collection(db, "activity"), orderBy("createdAt", "desc"), limit(5));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+          activityDiv.innerHTML = "<p>No Firebase activity yet.</p>";
+          return;
+        }
+
+        activityDiv.innerHTML = "";
+        snapshot.forEach(doc => {
+          const activity = doc.data();
+          activityDiv.innerHTML += `
+            <div class="item">
+              <strong>${activity.action || "activity"}</strong><br>
+              <span class="small">
+                ${activity.itemType || ""} ${activity.category || ""} by ${activity.user || "unknown user"}
+              </span>
+            </div>
+          `;
+        });
+      } catch (error) {
+        activityDiv.innerHTML = `<p>Firebase activity log error: ${error.message}</p>`;
+      }
+    }
+
+    loginButton.addEventListener("click", async () => {
+      await auth0Client.loginWithRedirect({
+        authorizationParams: {
+          audience: AUTH0_AUDIENCE,
+          redirect_uri: window.location.origin,
+          scope: "openid profile email"
+        }
+      });
+    });
+
+    logoutButton.addEventListener("click", () => {
+      auth0Client.logout({
+        logoutParams: {
+          returnTo: window.location.origin
+        }
+      });
+    });
+
+    document.getElementById("refresh-button").addEventListener("click", async () => {
+      await loadItems();
+      await loadActivity();
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      formMessage.textContent = "Submitting...";
+
+      const token = await getAccessToken();
+
+      const item = {
+        itemType: document.getElementById("itemType").value,
+        category: document.getElementById("category").value,
+        description: document.getElementById("description").value,
+        location: document.getElementById("location").value,
+        contact: document.getElementById("contact").value
+      };
+
+      const response = await fetch(`${API_URL}/items`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(item)
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        formMessage.textContent = `Error: ${data.error || response.statusText}`;
+        return;
+      }
+
+      await addDoc(collection(db, "activity"), {
+        action: "item_posted",
+        itemType: item.itemType,
+        category: item.category,
+        description: item.description,
+        location: item.location,
+        user: currentUser?.email || currentUser?.name || item.contact,
+        createdAt: serverTimestamp()
+      });
+
+      formMessage.textContent = "Item submitted. Match check queued.";
+      form.reset();
+      document.getElementById("contact").value = currentUser?.email || "";
+
+      await loadItems();
+      await loadActivity();
+    });
+
+    initAuth0().catch(error => {
+      loginStatus.textContent = `Auth0 error: ${error.message}`;
+      console.error(error);
+    });
+  </script>
+</body>
+</html>
